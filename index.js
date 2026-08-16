@@ -1,40 +1,36 @@
+const express = require('express');
 const admin = require('firebase-admin');
+const app = express();
 
-// Firebase Admin Setup (Aapne jo JSON download kiya hoga console se)
+// Firebase Admin Setup
 const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);
-
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://ludo-e8ffb-default-rtdb.firebaseio.com/" // Aapka URL yahan daalein
+  databaseURL: "APNA_FIREBASE_DATABASE_URL_YAHAN_DALEIN"
 });
 
 const db = admin.database();
 
-console.log("Ludo Authoritative Server is LIVE...");
-
-db.ref('rooms').on('child_changed', async (snapshot) => {
-    const roomId = snapshot.key;
-    const roomData = snapshot.val();
-
-    if (roomData.actions && roomData.actions.pending) {
-        const action = roomData.actions.pending;
-        const stateRef = db.ref(`rooms/${roomId}/state`);
-
-        // Turn Validation: Kya ye usi player ki turn hai?
-        // Hum abhi simple Dice Roll logic handle kar rahe hain
-        if (action.type === "ROLL") {
-            const diceValue = Math.floor(Math.random() * 6) + 1;
-            
-            await stateRef.update({
-                lastDice: diceValue,
-                currentTurn: action.uid, // logic to switch turn can be added here
-                status: "MOVING",
-                timestamp: Date.now()
-            });
-            console.log(`Room: ${roomId} | Player: ${action.uid} rolled ${diceValue}`);
-        }
-        
-        // Action process hone ke baad use delete karein
-        await db.ref(`rooms/${roomId}/actions/pending`).remove();
-    }
+// 1. API to Roll Dice (GitHub se control hoga)
+app.get('/roll', async (req, res) => {
+    const { roomId, userId } = req.query;
+    const diceValue = Math.floor(Math.random() * 6) + 1; // Dice Logic
+    
+    await db.ref(`rooms/${roomId}/state`).update({
+        lastDice: diceValue,
+        lastRoller: userId,
+        timestamp: Date.now()
+    });
+    
+    res.send({ success: true, dice: diceValue });
 });
+
+// 2. API to Get Status
+app.get('/status', async (req, res) => {
+    const { roomId } = req.query;
+    const snap = await db.ref(`rooms/${roomId}/state`).once('value');
+    res.send(snap.val() || { lastDice: 0 });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
