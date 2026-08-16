@@ -1,8 +1,9 @@
 {
-  "name": "ludo-server",
+  "name": "ludo-api-server",
   "version": "1.0.0",
   "main": "index.js",
   "dependencies": {
+    "express": "^4.17.1",
     "firebase-admin": "^11.0.0"
   }
 }
