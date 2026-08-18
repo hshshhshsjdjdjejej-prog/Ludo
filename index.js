@@ -10,46 +10,53 @@ admin.initializeApp({
 
 const db = admin.database();
 
-// Ludo Game Rules
-app.get('/join', async (req, res) => {
-    const { roomId, userId, name } = req.query;
-    const ref = db.ref(`rooms/${roomId}`);
-    const snap = await ref.once('value');
-    let room = snap.val() || { status: "WAITING", players: {} };
-    const colors = ["RED", "GREEN", "BLUE", "YELLOW"];
-    const count = Object.keys(room.players || {}).length;
-    if (!room.players || !room.players[userId]) {
-        await ref.child(`players/${userId}`).set({
-            name: name || "User", color: colors[count % 4], active: true, misses: 0
-        });
-    }
-    res.json({ success: true });
-});
-
-app.get('/start', async (req, res) => {
-    const { roomId } = req.query;
-    const ref = db.ref(`rooms/${roomId}`);
-    const players = (await ref.child('players').once('value')).val();
-    await ref.update({
-        status: "PLAYING",
-        state: {
-            currentTurn: Object.keys(players)[0],
-            lastDice: 0,
-            turnStartTime: Date.now(),
-            pieces: { RED: [-1,-1,-1,-1], GREEN: [-1,-1,-1,-1], BLUE: [-1,-1,-1,-1], YELLOW: [-1,-1,-1,-1] }
-        }
-    });
-    res.json({ success: true });
-});
+// Ludo Path Logic: Start positions for each color
+const START_POS = { RED: 0, GREEN: 13, YELLOW: 26, BLUE: 39 };
 
 app.get('/roll', async (req, res) => {
     const { roomId, userId } = req.query;
+    const roomRef = db.ref(`rooms/${roomId}`);
     const dice = Math.floor(Math.random() * 6) + 1;
-    await db.ref(`rooms/${roomId}/state`).update({
+
+    await roomRef.child('state').update({
         lastDice: dice,
+        status: "WAITING_MOVE",
         turnStartTime: Date.now()
     });
     res.json({ dice });
+});
+
+app.get('/move', async (req, res) => {
+    const { roomId, userId, pieceIdx } = req.query;
+    const roomRef = db.ref(`rooms/${roomId}`);
+    const room = (await roomRef.once('value')).val();
+    
+    const dice = room.state.lastDice;
+    const color = room.players[userId].color;
+    let pos = room.state.pieces[color][pieceIdx];
+
+    // Ludo King Rules
+    if (pos === -1 && dice === 6) pos = 0; // Goti Bahar nikli
+    else if (pos >= 0) pos += dice; 
+
+    if (pos > 56) return res.json({ error: "Invalid Move" });
+
+    // Capture (Cutting) Logic Placeholder
+    let extraTurn = (dice === 6 || pos === 56);
+    
+    const updates = {};
+    updates[`state/pieces/${color}/${pieceIdx}`] = pos;
+    
+    if (!extraTurn) {
+        const uids = Object.keys(room.players);
+        const nextIdx = (uids.indexOf(userId) + 1) % uids.length;
+        updates[`state/currentTurn`] = uids[nextIdx];
+    }
+    updates[`state/status`] = "WAITING_ROLL";
+    updates[`state/turnStartTime`] = Date.now();
+
+    await roomRef.update(updates);
+    res.json({ success: true });
 });
 
 app.get('/status', async (req, res) => {
