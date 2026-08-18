@@ -10,36 +10,34 @@ admin.initializeApp({
 
 const db = admin.database();
 
-// API: Join & Waiting Logic
-app.get('/join', async (req, res) => {
-    const { roomId, userId, name, dp } = req.query;
-    const ref = db.ref(`rooms/${roomId}`);
-    const snap = await ref.once('value');
-    let room = snap.val() || { status: "WAITING", players: {} };
+// Ludo Game Config (Design control from here)
+const gameConfig = {
+    colors: { RED: "#E74C3C", GREEN: "#27AE60", BLUE: "#2980B9", YELLOW: "#F1C40F" },
+    headline: "SagarTech 99",
+    timeout: 30000
+};
 
-    const colors = ["RED", "GREEN", "YELLOW", "BLUE"];
-    const count = Object.keys(room.players || {}).length;
-    
-    if (!room.players || !room.players[userId]) {
-        await ref.child(`players/${userId}`).update({
-            name, dp, color: colors[count], active: true, misses: 0
-        });
-    }
-    res.send({ success: true });
-});
-
-// API: Status with Timeout (30s)
+// API: Status (AIDE app isi ko har 1 second mein hit karega)
 app.get('/status', async (req, res) => {
     const { roomId } = req.query;
-    const ref = db.ref(`rooms/${roomId}`);
-    const snap = await ref.once('value');
-    if (!snap.exists()) return res.send({ status: "EMPTY" });
+    const snap = await db.ref(`rooms/${roomId}`).once('value');
+    if (!snap.exists()) return res.json({ status: "EMPTY", config: gameConfig });
+    
+    let data = snap.val();
+    data.config = gameConfig; // Send design data to app
+    res.json(data);
+});
 
-    let room = snap.val();
-    if (room.status === "PLAYING" && (Date.now() - room.state.turnStartTime > 30000)) {
-        // Turn Timeout Logic... (Previous logic here)
-    }
-    res.send(room);
+// API: Roll Dice Logic
+app.get('/roll', async (req, res) => {
+    const { roomId, userId } = req.query;
+    const dice = Math.floor(Math.random() * 6) + 1;
+    await db.ref(`rooms/${roomId}/state`).update({
+        lastDice: dice,
+        status: "WAITING_MOVE",
+        turnStartTime: Date.now()
+    });
+    res.json({ dice });
 });
 
 app.listen(process.env.PORT || 3000);
