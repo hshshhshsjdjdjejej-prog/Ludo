@@ -10,54 +10,59 @@ admin.initializeApp({
 
 const db = admin.database();
 
-// API: Join Room & Waiting List
-app.get('/join', async (req, res) => {
-    const { roomId, userId, name, dp } = req.query;
-    const roomRef = db.ref(`rooms/${roomId}`);
-    const snap = await roomRef.once('value');
-    let room = snap.val() || { status: "WAITING", players: {} };
+// Get Next Player in rotation
+const getNext = (players, current) => {
+    const ids = Object.keys(players).filter(id => players[id].active);
+    const idx = ids.indexOf(current);
+    return ids[(idx + 1) % ids.length];
+};
 
-    if (room.status === "PLAYING" && !room.players[userId]) return res.send({ error: "Game Busy" });
-
-    const colors = ["RED", "GREEN", "BLUE", "YELLOW"];
-    const count = Object.keys(room.players || {}).length;
-    
-    if (!room.players || !room.players[userId]) {
-        await roomRef.child(`players/${userId}`).set({
-            name, dp, color: colors[count], active: true, misses: 0, isHost: count === 0
-        });
-    }
-    res.send({ success: true });
-});
-
-// API: Start Game
-app.get('/start', async (req, res) => {
-    const { roomId } = req.query;
-    await db.ref(`rooms/${roomId}`).update({
-        status: "PLAYING",
-        state: {
-            currentTurn: "", // Set first player ID here
-            lastDice: 0,
-            status: "WAITING_ROLL",
-            turnStartTime: Date.now(),
-            pieces: { RED: [-1,-1,-1,-1], GREEN: [-1,-1,-1,-1], BLUE: [-1,-1,-1,-1], YELLOW: [-1,-1,-1,-1] }
-        }
-    });
-    res.send({ success: true });
-});
-
-// API: Roll Dice with Ludo King Rules
 app.get('/roll', async (req, res) => {
     const { roomId, userId } = req.query;
     const roomRef = db.ref(`rooms/${roomId}`);
+    const snap = await roomRef.once('value');
+    const room = snap.val();
+
+    if (room.state.currentTurn !== userId) return res.send({ error: "Turn error" });
+
     const dice = Math.floor(Math.random() * 6) + 1;
-    
     await roomRef.child('state').update({
         lastDice: dice,
         status: "WAITING_MOVE",
         turnStartTime: Date.now()
     });
     res.send({ dice });
+});
+
+// Main loop for 30s timeout
+app.get('/status', async (req, res) => {
+    const { roomId } = req.query;
+    const roomRef = db.ref(`rooms/${roomId}`);
+    const snap = await roomRef.once('value');
+    if (!snap.exists()) return res.send({ status: "EMPTY" });
+
+    let room = snap.val();
+    const now = Date.now();
+
+    // 30s Turn Timeout Logic
+    if (room.status === "PLAYING" && room.state.turnStartTime && (now - room.state.turnStartTime > 30000)) {
+        const current = room.state.currentTurn;
+        let misses = (room.players[current].misses || 0) + 1;
+        
+        if (misses >= 3) {
+            await roomRef.child(`players/${current}`).update({ active: false });
+        }
+        
+        const next = getNext(room.players, current);
+        await roomRef.child('state').update({
+            currentTurn: next,
+            turnStartTime: now,
+            lastDice: 0,
+            status: "WAITING_ROLL"
+        });
+        await roomRef.child(`players/${current}`).update({ misses: misses });
+    }
+    res.send(room);
 });
 
 app.listen(process.env.PORT || 3000);
